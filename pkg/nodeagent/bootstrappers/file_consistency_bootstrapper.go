@@ -42,20 +42,15 @@ type OSCChecker struct {
 func (c *OSCChecker) Start(ctx context.Context) error {
 	c.Log.Info("Starting OSC checker bootstrapper")
 
-	// Try to fetch node
-	var node corev1.Node
-	err := c.Client.Get(ctx, client.ObjectKey{Name: c.NodeName}, &node)
-	if err != nil {
+	if err := c.Client.Get(ctx, client.ObjectKey{Name: c.NodeName}, c.node); err != nil {
 		if apierrors.IsNotFound(err) {
 			c.Log.Info("Node not found yet, skipping OSC checks", "node", c.NodeName)
 			return nil
 		}
 		return err // real failure
 	}
-	c.node = &node
 
-	// Load last applied OSC
-	raw, err := c.FS.ReadFile(lastAppliedOSCPath)
+	oscFileContent, err := c.FS.ReadFile(lastAppliedOSCPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			c.Log.Info("No last-applied OSC found, skipping")
@@ -63,21 +58,17 @@ func (c *OSCChecker) Start(ctx context.Context) error {
 		}
 		return fmt.Errorf("cannot read last-applied OSC: %w", err)
 	}
-
 	var osc v1alpha1.OperatingSystemConfig
-	if err := yaml.Unmarshal(raw, &osc); err != nil {
+	if err := yaml.Unmarshal(oscFileContent, &osc); err != nil {
 		return fmt.Errorf("cannot parse OSC YAML: %w", err)
 	}
 
-	// File checks
 	for _, f := range osc.Spec.Files {
 		c.checkFile(f)
 	}
 
-	// Unit checks
 	for _, unit := range osc.Spec.Units {
 		c.checkUnitFile(&unit)
-
 		for _, di := range unit.DropIns {
 			diPath := c.resolveDropInPath(unit.Name, di.Name)
 			c.checkDropInFile(diPath, &di, unit.Name)
@@ -108,15 +99,13 @@ func (c *OSCChecker) checkFile(f v1alpha1.File) {
 		return
 	}
 
-	var expectedBytes []byte
-	var err error
-
+	var expected []byte
 	switch inline.Encoding {
 	case "", "plain":
-		expectedBytes = []byte(inline.Data)
+		expected = []byte(inline.Data)
 	case "b64", "base64":
-		expectedBytes, err = utils.DecodeBase64(inline.Data)
-		if err != nil {
+		var err error
+		if expected, err = utils.DecodeBase64(inline.Data); err != nil {
 			c.emitEvent("FileDecodeError",
 				fmt.Sprintf("Failed to decode base64 content for file %s", f.Path))
 			return
@@ -127,8 +116,8 @@ func (c *OSCChecker) checkFile(f v1alpha1.File) {
 		return
 	}
 
-	expectedHash := utils.ComputeSHA256Hex(expectedBytes)
-	actualBytes, err := c.FS.ReadFile(filepath.Clean(f.Path))
+	expectedHash := utils.ComputeSHA256Hex(expected)
+	actual, err := c.FS.ReadFile(filepath.Clean(f.Path))
 	if err != nil {
 		if os.IsNotExist(err) {
 			c.emitEvent("FileMissing",
@@ -140,7 +129,7 @@ func (c *OSCChecker) checkFile(f v1alpha1.File) {
 		return
 	}
 
-	actualHash := utils.ComputeSHA256Hex(actualBytes)
+	actualHash := utils.ComputeSHA256Hex(actual)
 	if expectedHash != actualHash {
 		c.emitEvent("FileMismatch",
 			fmt.Sprintf("File %s mismatch: expected %s, actual %s",
@@ -188,21 +177,22 @@ func (c *OSCChecker) checkDropInFile(path string, di *v1alpha1.DropIn, unitName 
 	}
 }
 
-func (c *OSCChecker) checkUnitEnabled(name string, expect bool) {
-	want := filepath.Join("/etc/systemd/system/multi-user.target.wants", name)
-	_, err := c.FS.Stat(want)
-	actual := err == nil
+func (c *OSCChecker) checkUnitEnabled(name string, expectedEnabled bool) {
+	isEnabled, err := c.FS.Exists(filepath.Join("/etc/systemd/system/multi-user.target.wants", name))
+	if err != nil {
+		isEnabled = false
+	}
 
-	if !actual && expect {
-		unitPath := c.resolveUnitPath(name)
-		if data, err := c.FS.ReadFile(unitPath); err == nil {
+	if !isEnabled{
+		if data, err := c.FS.ReadFile(c.resolveUnitPath(name)); err == nil {
 			if !strings.Contains(string(data), "[Install]") {
-				actual = true // static unit
+				// The unit is enabled as a static unit
+				isEnabled = true
 			}
 		}
 	}
 
-	if actual != expect {
+	if isEnabled != expectedEnabled {
 		c.emitEvent("UnitEnableMismatch",
 			fmt.Sprintf("Unit %s enable state mismatch: expected %t, actual %t",
 				name, expect, actual))
@@ -217,7 +207,7 @@ func (c *OSCChecker) resolveUnitPath(name string) string {
 	}
 
 	for _, p := range paths {
-		if _, err := c.FS.Stat(p); err == nil {
+		if exists, err := c.FS.Exists(p); exists && err == nil {
 			return p
 		}
 	}
