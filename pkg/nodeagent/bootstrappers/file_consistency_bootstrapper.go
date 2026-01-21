@@ -89,7 +89,7 @@ func (c *OSCChecker) Start(ctx context.Context) error {
 
 		for _, dep := range unit.FilePaths {
 			if _, err := c.FS.Stat(dep); os.IsNotExist(err) {
-				c.Log.Info("DEPENDENCY MISSING", "unit", unit.Name, "file", dep)
+				c.Log.Info("Dependency missing", "unit", unit.Name, "file", dep)
 				c.emitEvent(
 					"DependencyMissing",
 					fmt.Sprintf("Dependency file %s for unit %s is missing", dep, unit.Name),
