@@ -56,7 +56,6 @@ var _ = Describe("FileConsistencyBootstrapper (OSCChecker)", func() {
 
 	// Start()
 	Describe("Start", func() {
-
 		Context("when the node does not exist yet", func() {
 			It("should skip all checks and emit no events", func() {
 				// No node created in fake client
