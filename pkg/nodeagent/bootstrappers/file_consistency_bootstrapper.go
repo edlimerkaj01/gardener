@@ -1,7 +1,3 @@
-// SPDX-FileCopyrightText: SAP SE or an SAP affiliate company and Gardener contributors
-//
-// SPDX-License-Identifier: Apache-2.0
-
 package bootstrappers
 
 import (
@@ -14,6 +10,8 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/spf13/afero"
 	"gopkg.in/yaml.v3"
+
+	nodeagentconfigv1alpha1 "github.com/gardener/gardener/pkg/nodeagent/apis/config/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/tools/record"
@@ -23,7 +21,15 @@ import (
 	"github.com/gardener/gardener/pkg/utils"
 )
 
-const lastAppliedOSCPath = "/var/lib/gardener-node-agent/last-applied-osc.yaml"
+const (
+	lastAppliedOSCPath = nodeagentconfigv1alpha1.BaseDir + "/last-applied-osc.yaml"
+
+	// Systemd directory paths
+	systemdSystemPath      = "/etc/systemd/system"
+	systemdUsrLibPath      = "/usr/lib/systemd/system"
+	systemdLibPath         = "/lib/systemd/system"
+	systemdMultiUserTarget = "/etc/systemd/system/multi-user.target.wants"
+)
 
 // OSCChecker is a bootstrapper that checks the consistency of OperatingSystemConfig resources
 // against the actual state of files and systemd units on the node.
@@ -42,13 +48,15 @@ type OSCChecker struct {
 func (c *OSCChecker) Start(ctx context.Context) error {
 	c.Log.Info("Starting OSC checker bootstrapper")
 
-	if err := c.Client.Get(ctx, client.ObjectKey{Name: c.NodeName}, c.node); err != nil {
+	var node corev1.Node
+	if err := c.Client.Get(ctx, client.ObjectKey{Name: c.NodeName}, &node); err != nil {
 		if apierrors.IsNotFound(err) {
 			c.Log.Info("Node not found yet, skipping OSC checks", "node", c.NodeName)
 			return nil
 		}
-		return err // real failure
+		return fmt.Errorf("failed getting node: %w", err)
 	}
+	c.node = &node
 
 	oscFileContent, err := c.FS.ReadFile(lastAppliedOSCPath)
 	if err != nil {
@@ -58,6 +66,7 @@ func (c *OSCChecker) Start(ctx context.Context) error {
 		}
 		return fmt.Errorf("cannot read last-applied OSC: %w", err)
 	}
+
 	var osc v1alpha1.OperatingSystemConfig
 	if err := yaml.Unmarshal(oscFileContent, &osc); err != nil {
 		return fmt.Errorf("cannot parse OSC YAML: %w", err)
@@ -69,6 +78,7 @@ func (c *OSCChecker) Start(ctx context.Context) error {
 
 	for _, unit := range osc.Spec.Units {
 		c.checkUnitFile(&unit)
+
 		for _, di := range unit.DropIns {
 			diPath := c.resolveDropInPath(unit.Name, di.Name)
 			c.checkDropInFile(diPath, &di, unit.Name)
@@ -79,7 +89,8 @@ func (c *OSCChecker) Start(ctx context.Context) error {
 		}
 
 		for _, dep := range unit.FilePaths {
-			if _, err := c.FS.Stat(dep); os.IsNotExist(err) {
+			exists, err := c.FS.Exists(dep)
+			if err != nil || !exists {
 				c.Log.Info("Dependency missing", "unit", unit.Name, "file", dep)
 				c.emitEvent(
 					"DependencyMissing",
@@ -178,16 +189,17 @@ func (c *OSCChecker) checkDropInFile(path string, di *v1alpha1.DropIn, unitName 
 }
 
 func (c *OSCChecker) checkUnitEnabled(name string, expectedEnabled bool) {
-	isEnabled, err := c.FS.Exists(filepath.Join("/etc/systemd/system/multi-user.target.wants", name))
+	want := filepath.Join(systemdMultiUserTarget, name)
+	isEnabled, err := c.FS.Exists(want)
 	if err != nil {
 		isEnabled = false
 	}
 
-	if !isEnabled{
-		if data, err := c.FS.ReadFile(c.resolveUnitPath(name)); err == nil {
+	if !isEnabled && expectedEnabled {
+		unitPath := c.resolveUnitPath(name)
+		if data, err := c.FS.ReadFile(unitPath); err == nil {
 			if !strings.Contains(string(data), "[Install]") {
-				// The unit is enabled as a static unit
-				isEnabled = true
+				isEnabled = true // static unit
 			}
 		}
 	}
@@ -195,15 +207,15 @@ func (c *OSCChecker) checkUnitEnabled(name string, expectedEnabled bool) {
 	if isEnabled != expectedEnabled {
 		c.emitEvent("UnitEnableMismatch",
 			fmt.Sprintf("Unit %s enable state mismatch: expected %t, actual %t",
-				name, expect, actual))
+				name, expectedEnabled, isEnabled))
 	}
 }
 
 func (c *OSCChecker) resolveUnitPath(name string) string {
 	paths := []string{
-		filepath.Join("/etc/systemd/system", name),
-		filepath.Join("/usr/lib/systemd/system", name),
-		filepath.Join("/lib/systemd/system", name),
+		filepath.Join(systemdSystemPath, name),
+		filepath.Join(systemdUsrLibPath, name),
+		filepath.Join(systemdLibPath, name),
 	}
 
 	for _, p := range paths {
@@ -211,7 +223,7 @@ func (c *OSCChecker) resolveUnitPath(name string) string {
 			return p
 		}
 	}
-	return filepath.Join("/etc/systemd/system", name) // fallback
+	return filepath.Join(systemdSystemPath, name) // fallback
 }
 
 func (c *OSCChecker) resolveDropInPath(unitName, dropInName string) string {
