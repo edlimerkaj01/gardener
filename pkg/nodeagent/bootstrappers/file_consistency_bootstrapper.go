@@ -120,8 +120,10 @@ func (c *OSCChecker) checkFile(f v1alpha1.File) {
 	case "b64", "base64":
 		var err error
 		if expected, err = utils.DecodeBase64(inline.Data); err != nil {
-			c.emitEvent("FileDecodeError",
-				fmt.Sprintf("Failed to decode base64 content for file %s", f.Path))
+			c.emitEvent(
+				"FileDecodeError",
+				fmt.Sprintf("Failed to decode base64 content for file %s", f.Path)
+			)
 			return
 		}
 	default:
