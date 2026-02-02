@@ -127,8 +127,10 @@ func (c *OSCChecker) checkFile(f v1alpha1.File) {
 			return
 		}
 	default:
-		c.emitEvent("FileUnsupportedEncoding",
-			fmt.Sprintf("Unsupported encoding %s for file %s", inline.Encoding, f.Path))
+		c.emitEvent(
+			"FileUnsupportedEncoding",
+			fmt.Sprintf("Unsupported encoding %s for file %s", inline.Encoding, f.Path),
+		)
 		return
 	}
 
@@ -136,20 +138,25 @@ func (c *OSCChecker) checkFile(f v1alpha1.File) {
 	actual, err := c.FS.ReadFile(filepath.Clean(f.Path))
 	if err != nil {
 		if os.IsNotExist(err) {
-			c.emitEvent("FileMissing",
-				fmt.Sprintf("File %s is missing", f.Path))
+			c.emitEvent(
+				"FileMissing",
+				fmt.Sprintf("File %s is missing", f.Path),
+			)
 		} else {
-			c.emitEvent("FileReadError",
-				fmt.Sprintf("Failed to read file %s", f.Path))
+			c.emitEvent(
+				"FileReadError",
+				fmt.Sprintf("Failed to read file %s", f.Path),
+			)
 		}
 		return
 	}
 
 	actualHash := utils.ComputeSHA256Hex(actual)
 	if expectedHash != actualHash {
-		c.emitEvent("FileMismatch",
-			fmt.Sprintf("File %s mismatch: expected %s, actual %s",
-				f.Path, expectedHash, actualHash))
+		c.emitEvent(
+			"FileMismatch",
+			fmt.Sprintf("File %s mismatch: expected %s, actual %s", f.Path, expectedHash, actualHash),
+		)
 	}
 }
 
@@ -158,8 +165,10 @@ func (c *OSCChecker) checkUnitFile(unit *v1alpha1.Unit) {
 
 	raw, err := c.FS.ReadFile(path)
 	if err != nil {
-		c.emitEvent("UnitFileMissing",
-			fmt.Sprintf("Unit file %s is missing", unit.Name))
+		c.emitEvent(
+			"UnitFileMissing",
+			fmt.Sprintf("Unit file %s is missing", unit.Name),
+		)
 		return
 	}
 
@@ -171,16 +180,20 @@ func (c *OSCChecker) checkUnitFile(unit *v1alpha1.Unit) {
 	actualHash := utils.ComputeSHA256Hex(raw)
 
 	if expectedHash != actualHash {
-		c.emitEvent("UnitMismatch",
-			fmt.Sprintf("Unit %s content mismatch", unit.Name))
+		c.emitEvent(
+			"UnitMismatch",
+			fmt.Sprintf("Unit %s content mismatch", unit.Name),
+		)
 	}
 }
 
 func (c *OSCChecker) checkDropInFile(path string, di *v1alpha1.DropIn, unitName string) {
 	raw, err := c.FS.ReadFile(path)
 	if err != nil {
-		c.emitEvent("DropInMissing",
-			fmt.Sprintf("Drop-in %s for unit %s is missing", di.Name, unitName))
+		c.emitEvent(
+			"DropInMissing",
+			fmt.Sprintf("Drop-in %s for unit %s is missing", di.Name, unitName),
+		)
 		return
 	}
 
@@ -188,8 +201,10 @@ func (c *OSCChecker) checkDropInFile(path string, di *v1alpha1.DropIn, unitName 
 	actualHash := utils.ComputeSHA256Hex(raw)
 
 	if expectedHash != actualHash {
-		c.emitEvent("DropInMismatch",
-			fmt.Sprintf("Drop-in %s for unit %s mismatch", di.Name, unitName))
+		c.emitEvent(
+			"DropInMismatch",
+			fmt.Sprintf("Drop-in %s for unit %s mismatch", di.Name, unitName),
+		)
 	}
 }
 
@@ -210,9 +225,11 @@ func (c *OSCChecker) checkUnitEnabled(name string, expectedEnabled bool) {
 	}
 
 	if isEnabled != expectedEnabled {
-		c.emitEvent("UnitEnableMismatch",
+		c.emitEvent(
+			"UnitEnableMismatch",
 			fmt.Sprintf("Unit %s enable state mismatch: expected %t, actual %t",
-				name, expectedEnabled, isEnabled))
+				name, expectedEnabled, isEnabled),
+		)
 	}
 }
 
