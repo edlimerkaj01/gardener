@@ -179,7 +179,6 @@ func run(ctx context.Context, cancel context.CancelFunc, log logr.Logger, cfg *n
 	}
 
 	log.Info("Adding runnables to manager")
-
 	if err := mgr.Add(&controllerutils.ControlledRunner{
 		Manager: mgr,
 		BootstrapRunnables: []manager.Runnable{
